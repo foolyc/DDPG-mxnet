@@ -112,7 +112,7 @@ class DDPGNet(object):
         self.target = target_out.simple_bind(ctx=self.ctx, **actor_input_shapes)
 
         # define optimizer
-        self.critic_updater = mx.optimizer.get_updater(mx.optimizer.create(critic_updater, learning_rate=critic_lr, wd=0.01))
+        self.critic_updater = mx.optimizer.get_updater(mx.optimizer.create(critic_updater, learning_rate=critic_lr))
         self.actor_updater = mx.optimizer.get_updater(mx.optimizer.create(actor_updater, learning_rate=actor_lr))
 
         # init params
