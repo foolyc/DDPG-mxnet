@@ -5,8 +5,6 @@
 # --------------------------------------------------------
 
 import mxnet as mx
-
-# os.environ['MXNET_ENGINE_TYPE'] = 'NaiveEngine'
 import numpy as np
 import math
 from config import *

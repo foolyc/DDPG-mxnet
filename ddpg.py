@@ -3,9 +3,6 @@
 # Deep Deterministic Policy Gradient
 # Written by Chao Yu
 # --------------------------------------------------------
-
-import gym
-
 import os
 os.environ['MXNET_ENGINE_TYPE'] = 'NaiveEngine'
 import mxnet as mx
@@ -16,8 +13,6 @@ from DDPGNet import DDPGNet
 from replay_buffer import ReplayBuffer
 from ou_noise import OUNoise
 from config import *
-# Hyper Parameters:
-
 
 
 class DDPG:
@@ -39,23 +34,7 @@ class DDPG:
         self.replay_buffer = ReplayBuffer(memory_size)
 
         self.batch_size = batch_size
-        self.n_epochs = n_epochs
-        self.epoch_length = epoch_length
-        self.memory_size = memory_size
-        self.memory_start_size = memory_start_size
-        self.discount = discount
-        self.max_path_length = max_path_length
-        self.eval_samples = eval_samples
 
-        self.soft_target_tau = soft_target_tau
-        self.n_updates_per_sample = n_updates_per_sample
-        self.include_horizon_terminal = include_horizon_terminal
-
-        self.qfunc_loss_averages = []
-        self.policy_loss_averages = []
-        self.q_averages = []
-        self.y_averages = []
-        self.strategy_path_returns = []
         self.ddpgnet.init()
         self.train_step = 0
 
