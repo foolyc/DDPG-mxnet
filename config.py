@@ -15,6 +15,7 @@ max_path_length = 1000
 eval_samples = 10000
 critic_updater = "adam"
 critic_lr = 1e-3
+weight_decay = 1e-2
 actor_updater = "adam"
 actor_lr = 1e-4
 soft_target_tau = 1e-3
@@ -29,4 +30,4 @@ LAYER2_SIZE = 300
 
 ENV_NAME = 'InvertedPendulum-v1'
 EPISODES = 1000000
-TEST = 50
+TEST = 10

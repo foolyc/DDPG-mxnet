@@ -7,7 +7,6 @@ gc.enable()
 from config import *
 
 
-
 def main():
     env = filter_env.makeFilteredEnv(gym.make(ENV_NAME))
     agent = DDPG(env)

@@ -6,10 +6,12 @@
 
 import mxnet as mx
 
+# os.environ['MXNET_ENGINE_TYPE'] = 'NaiveEngine'
 import numpy as np
 import math
 from config import *
-
+from mxnet.ndarray import square
+from mxnet.ndarray import sqrt
 
 class DDPGNet(object):
     """
@@ -97,8 +99,16 @@ class DDPGNet(object):
         self.critic = critic_out.simple_bind(ctx=self.ctx, **critic_input_shapes)
 
         # for debug
-        grad_input_shape ={"obs": (self.batch_size, self.state_dim), "act": (self.batch_size, self.action_dim)}
-        self.grad = mx.symbol.MakeLoss(qval_sym_critic).simple_bind(ctx=self.ctx, **grad_input_shape)
+        # actor_loss =  -1.0 / self.batch_size * mx.symbol.sum(qval_sym_critic)
+        # self.grad = mx.symbol.MakeLoss(actor_loss).simple_bind(ctx=self.ctx, **grad_input_shape)
+        grad_arg_dict = {}
+        for name, arr in self.critic.arg_dict.items():
+            if name not in ['yval']:
+                grad_arg_dict[name] = arr
+        self.grad_batch = mx.nd.empty((self.batch_size, 1), ctx=self.ctx)
+        self.grad = mx.symbol.MakeLoss(-qval_sym_critic).bind(ctx=self.ctx, args=grad_arg_dict,
+                                                              args_grad={'act': self.grad_batch},
+                                                              shared_exec=self.critic)
 
         actor_input_shapes = {
             "obs": (self.batch_size, self.state_dim)}
@@ -112,32 +122,66 @@ class DDPGNet(object):
         self.target = target_out.simple_bind(ctx=self.ctx, **actor_input_shapes)
 
         # define optimizer
-        self.critic_updater = mx.optimizer.get_updater(mx.optimizer.create(critic_updater, learning_rate=critic_lr))
+        self.critic_updater = mx.optimizer.get_updater(mx.optimizer.create(critic_updater, learning_rate=critic_lr, wd=weight_decay))
         self.actor_updater = mx.optimizer.get_updater(mx.optimizer.create(actor_updater, learning_rate=actor_lr))
 
         # init params
-        initializer = mx.initializer.Normal(0.1)
         for name, arr in self.target.arg_dict.items():
-            if name not in actor_input_shapes:
-                initializer(name, arr)
-                if 'actor' in name:
-                    arr.copyto(self.actor.arg_dict[name])
-                    arr.copyto(self.actor_one.arg_dict[name])
+            if 'fc1' in name:
+                scale = 1/math.sqrt(self.state_dim)
+                initializer = mx.initializer.Uniform(scale)
+                initializer._init_weight(name, arr)
+            elif 'fc2' in name:
                 if 'critic' in name:
-                    arr.copyto(self.critic.arg_dict[name])
-                    arr.copyto(self.grad.arg_dict[name])
+                    scale = 1/math.sqrt(LAYER1_SIZE + self.action_dim)
+                    initializer = mx.initializer.Uniform(scale)
+                    initializer._init_weight(name, arr)
+                elif 'actor' in name:
+                    scale = 1 / math.sqrt(LAYER1_SIZE)
+                    initializer = mx.initializer.Uniform(scale)
+                    initializer._init_weight(name, arr)
+                else:
+                    pass
+            elif 'fc3' in name:
+                scale = 3e-3
+                initializer = mx.initializer.Uniform(scale)
+                initializer._init_weight(name, arr)
+            else:
+                pass
+
+        self.critic_state = {}
+        self.actor_state = {}
+        for name, arr in self.target.arg_dict.items():
+            if 'actor' in name:
+                arr.copyto(self.actor.arg_dict[name])
+                shape = self.actor.arg_dict[name].shape
+                self.actor_state[name] = (mx.nd.zeros(shape, self.ctx), mx.nd.zeros(shape, self.ctx))
+                # arr.copyto(self.actor_one.arg_dict[name])
+            if 'critic' in name:
+                arr.copyto(self.critic.arg_dict[name])
+                shape = self.critic.arg_dict[name].shape
+                self.critic_state[name] = (mx.nd.zeros(shape, self.ctx), mx.nd.zeros(shape, self.ctx))
+                # arr.copyto(self.grad.arg_dict[name])
+
 
     def update_critic(self, obs, act, yval):
         self.critic.arg_dict["obs"][:] = obs
         self.critic.arg_dict["act"][:] = act
         self.critic.arg_dict["yval"][:] = yval
         self.critic.forward(is_train=True)
+        # print self.critic.outputs[0].asnumpy()
         self.critic.backward()
-
+        # print "critic param :", self.critic.arg_dict['critic_fc3_bias'].asnumpy()
+        # print "critic grad :", self.critic.grad_dict['critic_fc3_bias'].asnumpy()
+        # update_param(self, weight, grad, state, lr=1e-3, beta1=0.9, beta2=0.999, epsilon=1e-8, wd=0)
         for i, index in enumerate(self.critic.grad_dict):
             if 'critic' in index:
-                self.critic_updater(i, self.critic.grad_dict[index], self.critic.arg_dict[index])
-                self.critic.arg_dict[index].copyto(self.grad.arg_dict[index])
+                self.update_param(self.critic.arg_dict[index], self.critic.grad_dict[index], self.critic_state[index], lr=critic_lr, wd = weight_decay)
+                # self.critic.arg_dict[index].copyto(self.grad.arg_dict[index])
+        # print "updating ................."
+        # print "critic param :", self.critic.arg_dict['critic_fc3_bias'].asnumpy()
+        # print "critic grad :", self.critic.grad_dict['critic_fc3_bias'].asnumpy()
+        # print "step updating over.............................."
 
     def update_actor(self, obs):
         self.actor.arg_dict["obs"][:] = obs
@@ -145,17 +189,20 @@ class DDPGNet(object):
         # for test
         self.grad.arg_dict["obs"][:] = obs
         self.grad.arg_dict['act'][:] = self.actor.outputs[0]
-        self.grad.forward(is_train = True)
+        self.grad.forward()
         self.grad.backward()
-        grad_batch = self.grad.grad_dict['act']
+        # print np.std(grad_batch.asnumpy()),np.mean(grad_batch.asnumpy())
 
-        self.actor.backward(grad_batch)
+        # print self.grad_batch.asnumpy()
+
+        self.actor.backward(self.grad_batch)
         for i, index in enumerate(self.actor.arg_dict):
             if 'actor' in index:
                 # print index
                 # print self.actor.grad_dict[index].asnumpy()
-                self.actor_updater(i, self.actor.grad_dict[index], self.actor.arg_dict[index])
-                self.actor.arg_dict[index].copyto(self.actor_one.arg_dict[index])
+                self.update_param(self.actor.arg_dict[index], self.actor.grad_dict[index], self.actor_state[index],
+                                  lr=actor_lr)
+                # self.actor.arg_dict[index].copyto(self.actor_one.arg_dict[index])
         # self.actor.forward(is_train=True)
         # print "actor loss after update", self.actor.outputs[0].asnumpy()
 
@@ -175,7 +222,26 @@ class DDPGNet(object):
         # single observation
         self.actor_one.arg_dict["obs"][:] = obs
         self.actor_one.forward(is_train=False)
-        return self.actor_one.outputs[0].asnumpy()
+        return self.actor_one.outputs[0].asnumpy()[0][0]
+
+
+    def update_param(self, weight, grad, state, lr=1e-3, beta1=0.9, beta2=0.999, epsilon=1e-8, wd=0):
+        mean, variance = state
+
+        mean *= beta1
+        mean += grad * (1. - beta1)
+
+        variance *= beta2
+        variance += (1 - beta2) * square(grad)
+
+        coef1 = 1. - beta1
+        coef2 = 1. - beta2
+        lr *= math.sqrt(coef2) / coef1
+
+        weight -= lr * mean / (sqrt(variance) + epsilon)
+        if wd > 0.:
+            weight[:] -= (lr * wd) * weight
+
 
 if __name__ =="__main__":
     d=DDPGNet(4,1)

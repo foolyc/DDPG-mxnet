@@ -5,8 +5,12 @@
 # --------------------------------------------------------
 
 import gym
+
+import os
+os.environ['MXNET_ENGINE_TYPE'] = 'NaiveEngine'
 import mxnet as mx
 import numpy as np
+print os.environ['MXNET_ENGINE_TYPE']
 from ou_noise import OUNoise
 from DDPGNet import DDPGNet
 from replay_buffer import ReplayBuffer
